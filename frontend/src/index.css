@@ -1,0 +1,57 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap");
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 216 42% 97%;
+    --foreground: 209 30% 13%;
+    --card: 0 0% 100%;
+    --border: 214 25% 88%;
+    --primary: 219 85% 56%;
+    --success: 145 75% 36%;
+    --warning: 34 72% 49%;
+    --accent: 249 100% 68%;
+    --muted: 215 24% 92%;
+    --ring: 219 85% 56%;
+  }
+
+  .dark {
+    --background: 216 29% 9%;
+    --foreground: 216 44% 91%;
+    --card: 213 34% 14%;
+    --border: 215 28% 22%;
+    --primary: 216 100% 73%;
+    --success: 143 61% 54%;
+    --warning: 38 86% 62%;
+    --accent: 249 100% 79%;
+    --muted: 214 25% 19%;
+    --ring: 216 100% 73%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+}
+
+@layer components {
+  .branch-rail {
+    background-image:
+      radial-gradient(circle at 16px 16px, hsl(var(--primary)) 0 3px, transparent 4px),
+      radial-gradient(circle at 16px calc(100% - 16px), hsl(var(--success)) 0 3px, transparent 4px),
+      linear-gradient(180deg, hsl(var(--primary)), hsl(var(--success)));
+    background-position: 0 0, 0 0, 15px 16px;
+    background-size: 32px 100%, 32px 100%, 2px calc(100% - 32px);
+    background-repeat: no-repeat;
+  }
+}
