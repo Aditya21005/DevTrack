@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
@@ -146,14 +146,97 @@ class DashboardService:
         )
 
     async def get_overview(self, session: AsyncSession, workspace_id: uuid.UUID, filters: DashboardFilters, actor: User) -> DashboardOverviewResponse:
+        repository = self.repository_factory(session)
+        normalized_filters = self._normalize_filters(filters)
+        monthly_filters = self._normalize_filters(filters, default_days=365)
+        await self._require_access(repository, workspace_id, normalized_filters.project_id, actor.id)
+
+        period = repository.make_period(normalized_filters.start_date, normalized_filters.end_date)  # type: ignore[arg-type]
+        previous_period = repository.make_period(
+            normalized_filters.start_date - (normalized_filters.end_date - normalized_filters.start_date + timedelta(days=1)),  # type: ignore[operator]
+            normalized_filters.start_date - timedelta(days=1),  # type: ignore[operator]
+        )
+        monthly_period = repository.make_period(monthly_filters.start_date, monthly_filters.end_date)  # type: ignore[arg-type]
+
+        counts = await repository.task_counts(workspace_id, normalized_filters.project_id)
+        current = await repository.task_counts_in_range(workspace_id, period, normalized_filters.project_id)
+        previous = await repository.task_counts_in_range(workspace_id, previous_period, normalized_filters.project_id)
+        status_rows = await repository.status_distribution(workspace_id, normalized_filters.project_id)
+        priority_rows = await repository.priority_distribution(workspace_id, normalized_filters.project_id)
+        created_series = dict(await repository.daily_created_series(workspace_id, period, normalized_filters.project_id))
+        completed_series = dict(await repository.daily_completed_series(workspace_id, period, normalized_filters.project_id))
+        productivity_counts = await repository.productivity_counts_from_precomputed(
+            workspace_id,
+            period,
+            counts=counts,
+            range_counts=current,
+            project_id=normalized_filters.project_id,
+        )
+        monthly_rows = await repository.monthly_statistics_from_counts(
+            workspace_id,
+            monthly_period,
+            pending_count=counts["pending"],
+            project_id=monthly_filters.project_id,
+        )
+
+        cards = DashboardCardsResponse(
+            workspace_id=workspace_id,
+            project_id=normalized_filters.project_id,
+            start_date=normalized_filters.start_date,  # type: ignore[arg-type]
+            end_date=normalized_filters.end_date,  # type: ignore[arg-type]
+            cards=[
+                self._card("total", "Total Tasks", counts["total"]),
+                self._card("pending", "Pending", counts["pending"]),
+                self._card("completed", "Completed", counts["completed"]),
+                self._card("overdue", "Overdue", counts["overdue"]),
+                self._card("created_period", "Created", current["created"], previous["created"]),
+                self._card("completed_period", "Completed In Period", current["completed"], previous["completed"]),
+            ],
+        )
+        days = self._days(normalized_filters.start_date, normalized_filters.end_date)  # type: ignore[arg-type]
+        denominator = productivity_counts["created_tasks"] or productivity_counts["pending_tasks"] + productivity_counts["completed_tasks"]
+        completion_rate = round((productivity_counts["completed_tasks"] / denominator) * 100, 2) if denominator else 0.0
+
         return DashboardOverviewResponse(
-            cards=await self.get_cards(session, workspace_id, filters, actor),
-            status_chart=await self.get_status_chart(session, workspace_id, filters, actor),
-            priority_chart=await self.get_priority_chart(session, workspace_id, filters, actor),
-            throughput_chart=await self.get_throughput_chart(session, workspace_id, filters, actor),
-            productivity=await self.get_productivity(session, workspace_id, filters, actor),
-            pending_completed=await self.get_pending_completed(session, workspace_id, filters, actor),
-            monthly_statistics=await self.get_monthly_statistics(session, workspace_id, filters, actor),
+            cards=cards,
+            status_chart=StatusChartResponse(
+                workspace_id=workspace_id,
+                project_id=normalized_filters.project_id,
+                points=[ChartPoint(label=label, value=value) for label, value in status_rows],
+            ),
+            priority_chart=PriorityChartResponse(
+                workspace_id=workspace_id,
+                project_id=normalized_filters.project_id,
+                points=[ChartPoint(label=label, value=value) for label, value in priority_rows],
+            ),
+            throughput_chart=ThroughputChartResponse(
+                workspace_id=workspace_id,
+                project_id=normalized_filters.project_id,
+                start_date=normalized_filters.start_date,  # type: ignore[arg-type]
+                end_date=normalized_filters.end_date,  # type: ignore[arg-type]
+                created=[TimeSeriesPoint(period=day, value=created_series.get(day, 0)) for day in days],
+                completed=[TimeSeriesPoint(period=day, value=completed_series.get(day, 0)) for day in days],
+            ),
+            productivity=ProductivityResponse(
+                workspace_id=workspace_id,
+                project_id=normalized_filters.project_id,
+                start_date=normalized_filters.start_date,  # type: ignore[arg-type]
+                end_date=normalized_filters.end_date,  # type: ignore[arg-type]
+                completion_rate=completion_rate,
+                **productivity_counts,
+            ),
+            pending_completed=PendingCompletedResponse(
+                workspace_id=workspace_id,
+                project_id=normalized_filters.project_id,
+                pending=counts["pending"],
+                completed=counts["completed"],
+                total=counts["total"],
+            ),
+            monthly_statistics=MonthlyStatisticsResponse(
+                workspace_id=workspace_id,
+                project_id=monthly_filters.project_id,
+                months=[MonthlyStatistic(**row) for row in monthly_rows],
+            ),
         )
 
     async def _require_access(self, repository: DashboardRepository, workspace_id: uuid.UUID, project_id: uuid.UUID | None, actor_id: uuid.UUID) -> None:
@@ -189,5 +272,3 @@ class DashboardService:
 
 def get_dashboard_service() -> DashboardService:
     return DashboardService()
-
-

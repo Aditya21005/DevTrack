@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
@@ -63,16 +63,24 @@ class DashboardRepository:
         return {key: int(getattr(row, key) or 0) for key in ["total", "completed", "pending", "canceled", "overdue"]}
 
     async def task_counts_in_range(self, workspace_id: uuid.UUID, period: DateRange, project_id: uuid.UUID | None = None) -> dict[str, int]:
-        base_scope = self._task_scope(workspace_id, project_id)
-        created_query = select(func.count(Issue.id)).where(*base_scope, Issue.created_at >= period.start, Issue.created_at < period.end)
-        completed_query = (
-            select(func.count(Issue.id))
+        query = (
+            select(
+                func.sum(case((Issue.created_at >= period.start, case((Issue.created_at < period.end, 1), else_=0)), else_=0)).label("created"),
+                func.sum(
+                    case(
+                        (
+                            WorkflowStatus.category == StatusCategory.done,
+                            case((Issue.updated_at >= period.start, case((Issue.updated_at < period.end, 1), else_=0)), else_=0),
+                        ),
+                        else_=0,
+                    )
+                ).label("completed"),
+            )
             .join(WorkflowStatus, Issue.status_id == WorkflowStatus.id)
-            .where(*base_scope, WorkflowStatus.category == StatusCategory.done, Issue.updated_at >= period.start, Issue.updated_at < period.end)
+            .where(*self._task_scope(workspace_id, project_id))
         )
-        created = int((await self.session.execute(created_query)).scalar_one() or 0)
-        completed = int((await self.session.execute(completed_query)).scalar_one() or 0)
-        return {"created": created, "completed": completed}
+        row = (await self.session.execute(query)).one()
+        return {"created": int(row.created or 0), "completed": int(row.completed or 0)}
 
     async def status_distribution(self, workspace_id: uuid.UUID, project_id: uuid.UUID | None = None) -> list[tuple[str, int]]:
         result = await self.session.execute(
@@ -122,15 +130,38 @@ class DashboardRepository:
     async def productivity_counts(self, workspace_id: uuid.UUID, period: DateRange, project_id: uuid.UUID | None = None) -> dict[str, int]:
         task_counts = await self.task_counts(workspace_id, project_id)
         range_counts = await self.task_counts_in_range(workspace_id, period, project_id)
-        comments_query = (
-            select(func.count(Comment.id))
-            .where(
-                Comment.organization_id == workspace_id,
-                Comment.deleted_at.is_(None),
-                Comment.created_at >= period.start,
-                Comment.created_at < period.end,
-            )
+        return await self.productivity_counts_from_precomputed(
+            workspace_id,
+            period,
+            counts=task_counts,
+            range_counts=range_counts,
+            project_id=project_id,
         )
+
+    async def productivity_counts_from_precomputed(
+        self,
+        workspace_id: uuid.UUID,
+        period: DateRange,
+        *,
+        counts: dict[str, int],
+        range_counts: dict[str, int],
+        project_id: uuid.UUID | None = None,
+    ) -> dict[str, int]:
+        comment_filters = [
+            Comment.organization_id == workspace_id,
+            Comment.deleted_at.is_(None),
+            Comment.created_at >= period.start,
+            Comment.created_at < period.end,
+        ]
+        if project_id is not None:
+            comment_filters.extend(
+                [
+                    Issue.id == Comment.issue_id,
+                    Issue.project_id == project_id,
+                    Issue.deleted_at.is_(None),
+                ]
+            )
+        comments_query = select(func.count(Comment.id)).where(*comment_filters)
         events_query = (
             select(func.count(ActivityEvent.id))
             .where(
@@ -144,13 +175,29 @@ class DashboardRepository:
         return {
             "created_tasks": range_counts["created"],
             "completed_tasks": range_counts["completed"],
-            "pending_tasks": task_counts["pending"],
-            "overdue_tasks": task_counts["overdue"],
+            "pending_tasks": counts["pending"],
+            "overdue_tasks": counts["overdue"],
             "comments_added": comments,
             "activity_events": events,
         }
 
     async def monthly_statistics(self, workspace_id: uuid.UUID, period: DateRange, project_id: uuid.UUID | None = None) -> list[dict[str, Any]]:
+        pending_snapshot = await self.task_counts(workspace_id, project_id)
+        return await self.monthly_statistics_from_counts(
+            workspace_id,
+            period,
+            pending_count=pending_snapshot["pending"],
+            project_id=project_id,
+        )
+
+    async def monthly_statistics_from_counts(
+        self,
+        workspace_id: uuid.UUID,
+        period: DateRange,
+        *,
+        pending_count: int,
+        project_id: uuid.UUID | None = None,
+    ) -> list[dict[str, Any]]:
         created_month = func.date_trunc("month", Issue.created_at).label("month")
         completed_month = func.date_trunc("month", Issue.updated_at).label("month")
         created_rows = await self.session.execute(
@@ -169,7 +216,6 @@ class DashboardRepository:
             )
             .group_by(completed_month)
         )
-        pending_snapshot = await self.task_counts(workspace_id, project_id)
         by_month: dict[date, dict[str, Any]] = {}
         for month, count in created_rows.all():
             key = self._as_date(month).replace(day=1)
@@ -178,7 +224,7 @@ class DashboardRepository:
             key = self._as_date(month).replace(day=1)
             by_month.setdefault(key, {"month": key, "created": 0, "completed": 0, "pending_snapshot": 0})["completed"] = int(count)
         for value in by_month.values():
-            value["pending_snapshot"] = pending_snapshot["pending"]
+            value["pending_snapshot"] = pending_count
         return [by_month[key] for key in sorted(by_month)]
 
     def make_period(self, start_date: date, end_date: date) -> DateRange:
@@ -203,5 +249,3 @@ class DashboardRepository:
         if isinstance(value, date):
             return value
         return datetime.fromisoformat(str(value)).date()
-
-

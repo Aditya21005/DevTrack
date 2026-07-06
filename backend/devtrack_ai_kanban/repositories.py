@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
@@ -103,18 +103,31 @@ class KanbanRepository:
         return result.scalar_one_or_none()
 
     async def get_column_tasks(self, workspace_id: uuid.UUID, project_id: uuid.UUID, status_id: uuid.UUID) -> list[Issue]:
+        return (await self.get_tasks_by_status(workspace_id, project_id, [status_id])).get(status_id, [])
+
+    async def get_tasks_by_status(
+        self,
+        workspace_id: uuid.UUID,
+        project_id: uuid.UUID,
+        status_ids: list[uuid.UUID],
+    ) -> dict[uuid.UUID, list[Issue]]:
+        if not status_ids:
+            return {}
         result = await self.session.execute(
             select(Issue)
             .where(
                 Issue.organization_id == workspace_id,
                 Issue.project_id == project_id,
-                Issue.status_id == status_id,
+                Issue.status_id.in_(status_ids),
                 Issue.issue_type == IssueType.task,
                 Issue.deleted_at.is_(None),
             )
-            .order_by(Issue.rank.asc(), Issue.issue_number.asc())
+            .order_by(Issue.status_id.asc(), Issue.rank.asc(), Issue.issue_number.asc())
         )
-        return list(result.scalars().all())
+        grouped: dict[uuid.UUID, list[Issue]] = {status_id: [] for status_id in status_ids}
+        for task in result.scalars().all():
+            grouped.setdefault(task.status_id, []).append(task)
+        return grouped
 
     async def count_column_tasks(self, workspace_id: uuid.UUID, project_id: uuid.UUID, status_id: uuid.UUID) -> int:
         result = await self.session.execute(
@@ -129,14 +142,26 @@ class KanbanRepository:
         return int(result.scalar_one())
 
     async def list_assignee_ids(self, workspace_id: uuid.UUID, task_id: uuid.UUID) -> list[uuid.UUID]:
+        return (await self.list_assignee_ids_for_tasks(workspace_id, [task_id])).get(task_id, [])
+
+    async def list_assignee_ids_for_tasks(
+        self,
+        workspace_id: uuid.UUID,
+        task_ids: list[uuid.UUID],
+    ) -> dict[uuid.UUID, list[uuid.UUID]]:
+        if not task_ids:
+            return {}
         result = await self.session.execute(
-            select(IssueAssignee.user_id).where(
+            select(IssueAssignee.issue_id, IssueAssignee.user_id).where(
                 IssueAssignee.organization_id == workspace_id,
-                IssueAssignee.issue_id == task_id,
+                IssueAssignee.issue_id.in_(task_ids),
                 IssueAssignee.deleted_at.is_(None),
             )
         )
-        return [user_id for user_id in result.scalars().all()]
+        grouped: dict[uuid.UUID, list[uuid.UUID]] = {task_id: [] for task_id in task_ids}
+        for task_id, user_id in result.all():
+            grouped.setdefault(task_id, []).append(user_id)
+        return grouped
 
     async def save_event(
         self,

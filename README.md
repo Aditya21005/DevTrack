@@ -1,4 +1,4 @@
-﻿# DevTrack AI
+# DevTrack AI
 
 DevTrack AI is an AI-powered developer productivity platform that combines project tracking, Kanban workflows, GitHub activity, dashboard analytics, and AI-assisted planning/documentation for engineering teams.
 

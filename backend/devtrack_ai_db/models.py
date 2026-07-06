@@ -504,6 +504,10 @@ class Issue(UUIDPrimaryKeyMixin, TenantMixin, AuditColumnsMixin, SoftDeleteMixin
         CheckConstraint("issue_number > 0", name="ck_issues_number_positive"),
         CheckConstraint("story_points IS NULL OR story_points >= 0", name="ck_issues_story_points_non_negative"),
         Index("ix_issues_org_project_status_rank", "organization_id", "project_id", "status_id", "rank"),
+        Index("ix_issues_org_project_created", "organization_id", "project_id", "created_at"),
+        Index("ix_issues_org_project_updated", "organization_id", "project_id", "updated_at"),
+        Index("ix_issues_org_project_priority", "organization_id", "project_id", "priority"),
+        Index("ix_issues_org_due_at_active", "organization_id", "due_at", postgresql_where=text("deleted_at IS NULL")),
         Index("ix_issues_org_reporter", "organization_id", "reporter_id"),
         Index("ix_issues_org_sprint", "organization_id", "sprint_id"),
         Index("ix_issues_parent", "parent_issue_id"),
@@ -561,6 +565,7 @@ class IssueLabel(UUIDPrimaryKeyMixin, TenantMixin, AuditColumnsMixin, SoftDelete
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
         ),
+        Index("ix_issue_labels_org_label", "organization_id", "label_id"),
     )
 
     issue_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("issues.id", ondelete="RESTRICT"), nullable=False)
@@ -572,6 +577,7 @@ class IssueLink(UUIDPrimaryKeyMixin, TenantMixin, AuditColumnsMixin, SoftDeleteM
     __table_args__ = (
         UniqueConstraint("source_issue_id", "target_issue_id", "link_type", name="uq_issue_links_source_target_type"),
         CheckConstraint("source_issue_id <> target_issue_id", name="ck_issue_links_no_self_link"),
+        Index("ix_issue_links_org_target", "organization_id", "target_issue_id"),
     )
 
     source_issue_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("issues.id", ondelete="RESTRICT"), nullable=False)
@@ -583,6 +589,7 @@ class Comment(UUIDPrimaryKeyMixin, TenantMixin, AuditColumnsMixin, SoftDeleteMix
     __tablename__ = "comments"
     __table_args__ = (
         Index("ix_comments_issue_created", "issue_id", "created_at"),
+        Index("ix_comments_org_created", "organization_id", "created_at"),
         Index("ix_comments_org_author", "organization_id", "author_id"),
     )
 
@@ -596,7 +603,10 @@ class Comment(UUIDPrimaryKeyMixin, TenantMixin, AuditColumnsMixin, SoftDeleteMix
 
 class Attachment(UUIDPrimaryKeyMixin, TenantMixin, AuditColumnsMixin, SoftDeleteMixin, Base):
     __tablename__ = "attachments"
-    __table_args__ = (Index("ix_attachments_issue", "issue_id"),)
+    __table_args__ = (
+        Index("ix_attachments_issue_created", "issue_id", "created_at"),
+        Index("ix_attachments_org_uploaded_by", "organization_id", "uploaded_by_id"),
+    )
 
     issue_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("issues.id", ondelete="RESTRICT"), nullable=True)
     comment_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("comments.id", ondelete="RESTRICT"), nullable=True)

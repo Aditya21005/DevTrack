@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import logging
 import uuid
@@ -109,7 +109,7 @@ class KanbanService:
         )
 
         logger.info("kanban.task_moved", extra={"board_id": str(board_id), "task_id": str(task.id), "actor_id": str(actor.id), "event_type": event_type.value})
-        card = await self._task_card(repository, workspace_id, task)
+        card = await self._task_card_for_single_task(repository, workspace_id, task)
         return KanbanMutationResponse(task=card, event_id=event.id, event_type=event.event_type, board_version=task.version)
 
     async def update_status(
@@ -136,10 +136,15 @@ class KanbanService:
 
     async def _build_board_response(self, repository: KanbanRepository, context: BoardContext) -> KanbanBoardResponse:
         columns = await repository.get_columns(context.board.organization_id, context.board.id)
+        status_ids = [column.workflow_status_id for column in columns]
+        tasks_by_status = await repository.get_tasks_by_status(context.board.organization_id, context.project.id, status_ids)
+        task_ids = [task.id for tasks in tasks_by_status.values() for task in tasks]
+        assignee_ids_by_task = await repository.list_assignee_ids_for_tasks(context.board.organization_id, task_ids)
+
         column_responses: list[KanbanColumnResponse] = []
         for column in columns:
-            tasks = await repository.get_column_tasks(context.board.organization_id, context.project.id, column.workflow_status_id)
-            cards = [await self._task_card(repository, context.board.organization_id, task) for task in tasks]
+            tasks = tasks_by_status.get(column.workflow_status_id, [])
+            cards = [self._task_card(task, assignee_ids_by_task.get(task.id, [])) for task in tasks]
             column_responses.append(
                 KanbanColumnResponse(
                     id=column.id,
@@ -159,8 +164,11 @@ class KanbanService:
             columns=column_responses,
         )
 
-    async def _task_card(self, repository: KanbanRepository, workspace_id: uuid.UUID, task: Issue) -> KanbanTaskCard:
+    async def _task_card_for_single_task(self, repository: KanbanRepository, workspace_id: uuid.UUID, task: Issue) -> KanbanTaskCard:
         assignee_ids = await repository.list_assignee_ids(workspace_id, task.id)
+        return self._task_card(task, assignee_ids)
+
+    def _task_card(self, task: Issue, assignee_ids: list[uuid.UUID]) -> KanbanTaskCard:
         return KanbanTaskCard(
             id=task.id,
             issue_number=task.issue_number,
@@ -284,9 +292,3 @@ class KanbanService:
 
 def get_kanban_service() -> KanbanService:
     return KanbanService()
-
-
-
-
-
-

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
@@ -43,6 +43,7 @@ def create_database_engine(settings: Settings | None = None) -> AsyncEngine:
             max_overflow=settings.database_max_overflow,
             pool_timeout=settings.database_pool_timeout_seconds,
             pool_recycle=settings.database_pool_recycle_seconds,
+            pool_use_lifo=settings.database_pool_use_lifo,
             pool_pre_ping=True,
             future=True,
             connect_args={
@@ -61,6 +62,7 @@ def create_database_engine(settings: Settings | None = None) -> AsyncEngine:
             "database_max_overflow": settings.database_max_overflow,
             "database_pool_timeout_seconds": settings.database_pool_timeout_seconds,
             "database_pool_recycle_seconds": settings.database_pool_recycle_seconds,
+            "database_pool_use_lifo": settings.database_pool_use_lifo,
         },
     )
     return engine

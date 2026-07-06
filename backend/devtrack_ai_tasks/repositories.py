@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
@@ -245,29 +245,49 @@ class TaskRepository:
         return list(result.scalars().all())
 
     async def list_assignees(self, workspace_id: uuid.UUID, task_id: uuid.UUID) -> list[tuple[IssueAssignee, User]]:
+        return (await self.list_assignees_for_tasks(workspace_id, [task_id])).get(task_id, [])
+
+    async def list_assignees_for_tasks(
+        self,
+        workspace_id: uuid.UUID,
+        task_ids: list[uuid.UUID],
+    ) -> dict[uuid.UUID, list[tuple[IssueAssignee, User]]]:
+        if not task_ids:
+            return {}
         result = await self.session.execute(
             select(IssueAssignee, User)
             .join(User, IssueAssignee.user_id == User.id)
             .where(
                 IssueAssignee.organization_id == workspace_id,
-                IssueAssignee.issue_id == task_id,
+                IssueAssignee.issue_id.in_(task_ids),
                 IssueAssignee.deleted_at.is_(None),
                 User.deleted_at.is_(None),
             )
-            .order_by(User.display_name.asc())
+            .order_by(IssueAssignee.issue_id.asc(), User.display_name.asc())
         )
-        return list(result.all())
+        grouped: dict[uuid.UUID, list[tuple[IssueAssignee, User]]] = {task_id: [] for task_id in task_ids}
+        for assignment, user in result.all():
+            grouped.setdefault(assignment.issue_id, []).append((assignment, user))
+        return grouped
 
     async def list_labels(self, workspace_id: uuid.UUID, task_id: uuid.UUID) -> list[Label]:
+        return (await self.list_labels_for_tasks(workspace_id, [task_id])).get(task_id, [])
+
+    async def list_labels_for_tasks(self, workspace_id: uuid.UUID, task_ids: list[uuid.UUID]) -> dict[uuid.UUID, list[Label]]:
+        if not task_ids:
+            return {}
         result = await self.session.execute(
-            select(Label)
-            .join(IssueLabel, IssueLabel.label_id == Label.id)
+            select(IssueLabel.issue_id, Label)
+            .join(Label, IssueLabel.label_id == Label.id)
             .where(
                 IssueLabel.organization_id == workspace_id,
-                IssueLabel.issue_id == task_id,
+                IssueLabel.issue_id.in_(task_ids),
                 IssueLabel.deleted_at.is_(None),
                 Label.deleted_at.is_(None),
             )
-            .order_by(Label.name.asc())
+            .order_by(IssueLabel.issue_id.asc(), Label.name.asc())
         )
-        return list(result.scalars().all())
+        grouped: dict[uuid.UUID, list[Label]] = {task_id: [] for task_id in task_ids}
+        for task_id, label in result.all():
+            grouped.setdefault(task_id, []).append(label)
+        return grouped

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from functools import lru_cache
 from typing import Literal
@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     database_max_overflow: int = Field(default=20, ge=0, le=200)
     database_pool_timeout_seconds: int = Field(default=30, ge=1, le=300)
     database_pool_recycle_seconds: int = Field(default=1800, ge=60, le=86400)
+    database_pool_use_lifo: bool = True
     database_statement_timeout_ms: int = Field(default=30000, ge=1000, le=600000)
     database_lock_timeout_ms: int = Field(default=5000, ge=100, le=120000)
     database_application_name: str = "devtrack-ai-api"
@@ -120,5 +121,3 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Return cached settings for FastAPI dependency injection and app startup."""
     return Settings()
-
-

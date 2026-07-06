@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import logging
 import uuid
@@ -435,7 +435,3 @@ class TaskService:
 
 def get_task_service() -> TaskService:
     return TaskService()
-
-
-
-
